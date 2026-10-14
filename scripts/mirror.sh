@@ -15,6 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 [[ "$REVISION" =~ ^[1-9][0-9]*$ ]] || { echo "invalid revision: $REVISION" >&2; exit 1; }
 
 mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
 rm -f "$OUT/$ASSET" "$OUT/SHA256SUMS" "$OUT/build.json"
 
 echo "Downloading $ASSET from php/frankenphp v$VERSION"
@@ -22,11 +23,11 @@ gh release download "v$VERSION" --repo php/frankenphp --pattern "$ASSET" --dir "
 chmod +x "$OUT/$ASSET"
 
 echo "Verifying GitHub attestation"
-gh attestation verify "$OUT/$ASSET" --repo php/frankenphp
+gh attestation verify "$OUT/$ASSET" --repo php/frankenphp --signer-workflow php/frankenphp/.github/workflows/static.yaml
 
 run() {
   if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
-    "$OUT/$ASSET" "$@"
+    env -u GH_TOKEN -u GITHUB_TOKEN "$OUT/$ASSET" "$@"
   else
     docker run --rm --platform linux/arm64 -v "$OUT:/out:ro" -v "$HERE:/scripts:ro" node:24-slim "/out/$ASSET" "${@/#$HERE//scripts}"
   fi

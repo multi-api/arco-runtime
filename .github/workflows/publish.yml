@@ -20,31 +20,43 @@ jobs:
   publish:
     runs-on: ubuntu-24.04-arm
     env:
-      GH_TOKEN: ${{ github.token }}
-      TAG: frankenphp-${{ inputs.frankenphp_version }}-r${{ inputs.revision }}
+      VERSION: ${{ inputs.frankenphp_version }}
+      REVISION: ${{ inputs.revision }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Validate inputs and ref
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "must run from main (got $GITHUB_REF)" >&2; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version" >&2; exit 1; }
+          [[ "$REVISION" =~ ^[1-9][0-9]*$ ]] || { echo "invalid revision" >&2; exit 1; }
+          echo "TAG=frankenphp-${VERSION}-r${REVISION}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Refuse to overwrite an existing build
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "Release $TAG already exists" >&2; exit 1
           fi
       - name: Mirror and verify
-        run: scripts/mirror.sh "${{ inputs.frankenphp_version }}" "${{ inputs.revision }}" dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/mirror.sh "$VERSION" "$REVISION" dist
       - name: Dry run artifact
         if: ${{ !inputs.publish }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ env.TAG }}
           path: dist/
       - name: Attest
         if: ${{ inputs.publish }}
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: dist/frankenphp-linux-aarch64
       - name: Create release
         if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$TAG" dist/frankenphp-linux-aarch64 dist/SHA256SUMS dist/build.json \
-            --repo "$GITHUB_REPOSITORY" --title "$TAG" \
-            --notes "Mirror of the official FrankenPHP v${{ inputs.frankenphp_version }} linux-aarch64 binary, attestation-verified. See build.json."
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "Mirror of the official FrankenPHP v${VERSION} linux-aarch64 binary, attestation-verified. See build.json."
