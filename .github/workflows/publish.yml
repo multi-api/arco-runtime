@@ -1,0 +1,50 @@
+name: Publish runtime build
+on:
+  workflow_dispatch:
+    inputs:
+      frankenphp_version:
+        description: FrankenPHP version (e.g. 1.13.0)
+        required: true
+      revision:
+        description: Build revision (1, 2, ...)
+        required: true
+      publish:
+        description: Create the release (false = dry run, upload as artifact)
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: frankenphp-${{ inputs.frankenphp_version }}-r${{ inputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse to overwrite an existing build
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG already exists" >&2; exit 1
+          fi
+      - name: Mirror and verify
+        run: scripts/mirror.sh "${{ inputs.frankenphp_version }}" "${{ inputs.revision }}" dist
+      - name: Dry run artifact
+        if: ${{ !inputs.publish }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TAG }}
+          path: dist/
+      - name: Attest
+        if: ${{ inputs.publish }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/frankenphp-linux-aarch64
+      - name: Create release
+        if: ${{ inputs.publish }}
+        run: |
+          gh release create "$TAG" dist/frankenphp-linux-aarch64 dist/SHA256SUMS dist/build.json \
+            --repo "$GITHUB_REPOSITORY" --title "$TAG" \
+            --notes "Mirror of the official FrankenPHP v${{ inputs.frankenphp_version }} linux-aarch64 binary, attestation-verified. See build.json."
