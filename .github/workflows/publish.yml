@@ -12,13 +12,16 @@ on:
         description: Create the release (false = dry run, upload as artifact)
         type: boolean
         default: false
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+permissions: {}
+concurrency:
+  group: publish-${{ inputs.frankenphp_version }}-${{ inputs.revision }}
+  cancel-in-progress: false
 jobs:
-  publish:
+  # Runs the upstream binary (smoke test). Read-only token: nothing here can write to the repo or mint OIDC tokens.
+  verify:
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
     env:
       VERSION: ${{ inputs.frankenphp_version }}
       REVISION: ${{ inputs.revision }}
@@ -29,7 +32,9 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version" >&2; exit 1; }
           [[ "$REVISION" =~ ^[1-9][0-9]*$ ]] || { echo "invalid revision" >&2; exit 1; }
           echo "TAG=frankenphp-${VERSION}-r${REVISION}" >> "$GITHUB_ENV"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Refuse to overwrite an existing build
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,19 +46,64 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/mirror.sh "$VERSION" "$REVISION" dist
-      - name: Dry run artifact
-        if: ${{ !inputs.publish }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.TAG }}
-          path: dist/
+          path: |
+            dist/frankenphp-linux-aarch64
+            dist/SHA256SUMS
+            dist/build.json
+          if-no-files-found: error
+
+  # Holds the write/OIDC credentials. Never executes the binary.
+  publish:
+    needs: verify
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ inputs.frankenphp_version }}
+      REVISION: ${{ inputs.revision }}
+    steps:
+      - name: Validate inputs and ref
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "must run from main (got $GITHUB_REF)" >&2; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version" >&2; exit 1; }
+          [[ "$REVISION" =~ ^[1-9][0-9]*$ ]] || { echo "invalid revision" >&2; exit 1; }
+          echo "TAG=frankenphp-${VERSION}-r${REVISION}" >> "$GITHUB_ENV"
+          echo "BUILD_ID=${VERSION}-r${REVISION}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.TAG }}
+          path: dist
+      - name: Re-verify the artifact (no execution)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          gh attestation verify frankenphp-linux-aarch64 --repo php/frankenphp --signer-workflow php/frankenphp/.github/workflows/static.yaml
+          SHA="$(sha256sum frankenphp-linux-aarch64 | cut -d' ' -f1)"
+          SIZE="$(wc -c < frankenphp-linux-aarch64 | tr -d ' ')"
+          [[ "$SHA" == "$(jq -r '.sha256' build.json)" ]] || { echo "sha256 differs from build.json" >&2; exit 1; }
+          [[ "$SIZE" == "$(jq -r '.size' build.json)" ]] || { echo "size differs from build.json" >&2; exit 1; }
+          [[ "sha256:$SHA" == "$(jq -r '.origin.asset_digest' build.json)" ]] || { echo "origin.asset_digest differs" >&2; exit 1; }
+          [[ "$BUILD_ID" == "$(jq -r '.id' build.json)" ]] || { echo "build.json id differs from requested build" >&2; exit 1; }
+          sha256sum -c SHA256SUMS
+      - name: Refuse to overwrite an existing build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG already exists" >&2; exit 1
+          fi
       - name: Attest
-        if: ${{ inputs.publish }}
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/frankenphp-linux-aarch64
       - name: Create release
-        if: ${{ inputs.publish }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

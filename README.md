@@ -20,6 +20,8 @@ Publish (creates the release and attestation):
 gh workflow run publish.yml -f frankenphp_version=1.13.0 -f revision=1 -f publish=true
 ```
 
+The workflow has two jobs. `verify` runs with a read-only token: it downloads the upstream binary, verifies its attestation, smoke-tests it (the only step that executes the binary) and uploads the binary, `SHA256SUMS` and `build.json` as a workflow artifact. `publish` (only when `publish=true`) holds the write and OIDC permissions but never executes the binary: it re-verifies the upstream attestation, cross-checks sha256, size, digest and build id against `build.json`, re-checks that the tag is free, then attests and creates the release. Runs for the same build id are serialized.
+
 You can also run `scripts/mirror.sh <version> <revision> <outdir>` locally (needs `gh`, `jq`, and Docker on non-arm64-Linux hosts).
 
 ## Immutability rule
@@ -29,5 +31,5 @@ Never delete or replace a release. If anything needs to change, publish a new re
 ## Verifying a download
 
 ```bash
-gh attestation verify frankenphp-linux-aarch64 --repo multi-api/arco-runtime
+gh attestation verify frankenphp-linux-aarch64 --repo multi-api/arco-runtime --signer-workflow multi-api/arco-runtime/.github/workflows/publish.yml
 ```
