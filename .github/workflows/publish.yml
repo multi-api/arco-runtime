@@ -91,6 +91,11 @@ jobs:
           [[ "$SIZE" == "$(jq -r '.size' build.json)" ]] || { echo "size differs from build.json" >&2; exit 1; }
           [[ "sha256:$SHA" == "$(jq -r '.origin.asset_digest' build.json)" ]] || { echo "origin.asset_digest differs" >&2; exit 1; }
           [[ "$BUILD_ID" == "$(jq -r '.id' build.json)" ]] || { echo "build.json id differs from requested build" >&2; exit 1; }
+          [[ "$VERSION" == "$(jq -r '.frankenphp' build.json)" ]] || { echo "build.json frankenphp differs from requested version" >&2; exit 1; }
+          [[ "linux-aarch64" == "$(jq -r '.arch' build.json)" ]] || { echo "build.json arch is not linux-aarch64" >&2; exit 1; }
+          # Independent of the verify job's output: the binary must be the asset upstream publishes for this version.
+          UPSTREAM="$(gh api "repos/php/frankenphp/releases/tags/v${VERSION}" --jq '.assets[] | select(.name == "frankenphp-linux-aarch64") | .digest')"
+          [[ "sha256:$SHA" == "$UPSTREAM" ]] || { echo "binary differs from upstream v${VERSION} asset ($UPSTREAM)" >&2; exit 1; }
           sha256sum -c SHA256SUMS
       - name: Refuse to overwrite an existing build
         env:
