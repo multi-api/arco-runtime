@@ -24,7 +24,7 @@ gh workflow run publish.yml -f frankenphp_version=1.13.0 -f revision=1 -f spc_ta
   -f extensions=amqp,apcu,ast,bcmath,brotli,bz2,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,ftp,gd,gmp,gettext,iconv,igbinary,imagick,intl,ldap,lz4,mbregex,mbstring,memcached,mysqli,mysqlnd,opcache,openssl,password-argon2,parallel,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pgsql,phar,posix,protobuf,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,ssh2,sysvmsg,sysvsem,sysvshm,tidy,tokenizer,xlswriter,xml,xmlreader,xmlwriter,xsl,xz,zip,zlib,yaml,zstd -f publish=true
 ```
 
-The workflow has two jobs. `verify` runs with a read-only token: it downloads the upstream binary, verifies its attestation, smoke-tests it, builds the PHP CLI with `scripts/build-php.sh`, checks parity (`scripts/parity.php`, run by the built CLI), runs it in `public.ecr.aws/lambda/provided:al2023`, enforces a 100 MB size gate, and uploads both binaries, `SHA256SUMS` and `build.json` as a workflow artifact. Only this job executes binaries. `publish` (only when `publish=true`) holds the write and OIDC permissions but never executes the binary: it re-verifies the upstream attestation, cross-checks sha256, size, digest and build id (and the PHP CLI's sha256 and size) against `build.json`, re-checks that the tag is free, then attests and creates the release. Runs for the same build id are serialized.
+The workflow has three jobs. `build-php` runs with a read-only token: it builds the PHP CLI with `scripts/build-php.sh` (static-php-cli) and uploads only that binary. `verify` also runs with a read-only token and never runs build code: it downloads the upstream binary, verifies its attestation, smoke-tests it, then takes the PHP CLI from `build-php`, checks parity (`scripts/parity.php`, run by the runner's PHP), runs the CLI in `public.ecr.aws/lambda/provided:al2023`, enforces a 100 MB size gate, records the CLI's sha256 as a job output, and uploads both binaries, `SHA256SUMS` and `build.json` as a workflow artifact. `publish` (only when `publish=true`) holds the write and OIDC permissions but never executes the binary: it re-verifies the upstream attestation, cross-checks sha256, size, digest and build id (and the PHP CLI's sha256, size and spc tag) against `build.json`, checks the PHP CLI's sha256 against the `verify` job output, re-checks that the tag is free, then attests and creates the release. Runs for the same build id are serialized.
 
 You can also run `scripts/mirror.sh <version> <revision> <outdir>` locally (needs `gh`, `jq`, and Docker on non-arm64-Linux hosts).
 
@@ -36,6 +36,7 @@ Never delete or replace a release. If anything needs to change, publish a new re
 
 ```bash
 gh attestation verify frankenphp-linux-aarch64 --repo multi-api/arco-runtime --signer-workflow multi-api/arco-runtime/.github/workflows/publish.yml
+gh attestation verify php-linux-aarch64 --repo multi-api/arco-runtime --signer-workflow multi-api/arco-runtime/.github/workflows/publish.yml
 ```
 
 ## PHP CLI build and parity check
