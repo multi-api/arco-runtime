@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds a static PHP CLI matching a FrankenPHP static build (same PHP version and extensions, musl, ZTS).
 # Usage: scripts/build-php.sh <php-version> <spc-tag> <extensions-csv> <outdir>
-# Options verified against static-php-cli 2.8.5 (spc download/build/doctor).
+# Uses the spc release binary for <spc-tag> (needs gh); options verified against static-php-cli 2.8.5 (spc download/build/doctor).
 set -euo pipefail
 
 PHP_VERSION="${1:?php version, e.g. 8.5.11}"
@@ -21,14 +21,23 @@ OUT="$(cd "$OUT" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "Cloning static-php-cli $SPC_TAG"
-git clone --depth 1 --branch "$SPC_TAG" https://github.com/crazywhalecc/static-php-cli "$WORK/spc"
-cd "$WORK/spc"
-composer install --no-dev -a --no-interaction
+# spc's self-contained release binary (no PHP or Composer needed), checked against the release's own digest.
+SPC_ASSET="spc-linux-aarch64.tar.gz"
+echo "Downloading static-php-cli $SPC_TAG ($SPC_ASSET)"
+gh release download "$SPC_TAG" --repo crazywhalecc/static-php-cli --pattern "$SPC_ASSET" --dir "$WORK"
+EXPECTED="$(gh api "repos/crazywhalecc/static-php-cli/releases/tags/$SPC_TAG" --jq ".assets[] | select(.name==\"$SPC_ASSET\") | .digest")"
+ACTUAL="sha256:$(sha256sum "$WORK/$SPC_ASSET" | cut -d' ' -f1)"
+[[ -n "$EXPECTED" && "$ACTUAL" == "$EXPECTED" ]] || { echo "$SPC_ASSET digest $ACTUAL != release digest $EXPECTED" >&2; exit 1; }
+[[ "$(tar -tzf "$WORK/$SPC_ASSET")" == "spc" ]] || { echo "unexpected $SPC_ASSET layout (expected a single spc file)" >&2; exit 1; }
+tar -xzf "$WORK/$SPC_ASSET" -C "$WORK" spc
+rm "$WORK/$SPC_ASSET"
+[[ -f "$WORK/spc" && -x "$WORK/spc" ]] || { echo "spc is not an executable file" >&2; exit 1; }
 
-./bin/spc doctor --auto-fix
-./bin/spc download --with-php="$PHP_VERSION" --for-extensions="$EXTS" --prefer-pre-built --retry 5
-SPC_LIBC=musl ./bin/spc build "$EXTS" --build-cli --enable-zts --disable-opcache-jit
+# The spc binary uses the current directory for buildroot/, source/ and downloads/.
+cd "$WORK"
+./spc doctor --auto-fix
+./spc download --with-php="$PHP_VERSION" --for-extensions="$EXTS" --prefer-pre-built --retry 5
+SPC_LIBC=musl ./spc build "$EXTS" --build-cli --enable-zts --disable-opcache-jit
 
 cp buildroot/bin/php "$OUT/php-linux-aarch64"
 chmod 0755 "$OUT/php-linux-aarch64"

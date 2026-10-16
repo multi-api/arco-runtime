@@ -54,14 +54,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/mirror.sh "$VERSION" "$REVISION" upstream
-      # static-php-cli runs from source: it needs PHP and Composer (Ubuntu 24.04 packages). spc doctor installs the musl toolchain.
-      - name: Install static-php-cli prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends php-cli php-xml php-mbstring php-curl php-zip unzip composer
+      # Uses spc's digest-checked release binary (no PHP or Composer needed); spc doctor installs the musl toolchain.
       - name: Build the PHP CLI
         env:
-          # Read-only token, used by spc download for GitHub API rate limits.
+          # Read-only token: gh downloads spc and its release digest; spc download uses it for GitHub API rate limits.
+          GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/build-php.sh "$(jq -r .php upstream/build.json)" "$SPC_TAG" "$EXTENSIONS" php-cli
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
