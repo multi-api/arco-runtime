@@ -4,23 +4,27 @@ Immutable FrankenPHP runtime builds for [Arco](https://github.com/multi-api/arco
 
 ## Build id scheme
 
-`<frankenphp-version>-r<revision>`, for example `1.13.0-r1`. The release tag is `frankenphp-1.13.0-r1`. Each release contains `frankenphp-linux-aarch64`, `SHA256SUMS` and `build.json` (version, PHP version, sha256, size, origin, extensions).
+`<frankenphp-version>-r<revision>`, for example `1.13.0-r1`. The release tag is `frankenphp-1.13.0-r1`. Each release contains `frankenphp-linux-aarch64`, `php-linux-aarch64` (a static PHP CLI with the same PHP version and extensions), `SHA256SUMS` and `build.json` (version, PHP version, sha256, size, origin, extensions, and `php_cli`: sha256, size, spc tag, extensions).
 
 ## Publishing a build
+
+`spc_tag` is the static-php-cli release used to build the PHP CLI. `extensions` is `defaultExtensions` from FrankenPHP's `build-static.sh` at the release tag (`gh api "repos/php/frankenphp/contents/build-static.sh?ref=v1.13.0" --jq .content | base64 -d | grep ^defaultExtensions=`).
 
 Dry run (builds and verifies, uploads the result as a workflow artifact only):
 
 ```bash
-gh workflow run publish.yml -f frankenphp_version=1.13.0 -f revision=1 -f publish=false
+gh workflow run publish.yml -f frankenphp_version=1.13.0 -f revision=1 -f spc_tag=2.8.5 \
+  -f extensions=amqp,apcu,ast,bcmath,brotli,bz2,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,ftp,gd,gmp,gettext,iconv,igbinary,imagick,intl,ldap,lz4,mbregex,mbstring,memcached,mysqli,mysqlnd,opcache,openssl,password-argon2,parallel,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pgsql,phar,posix,protobuf,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,ssh2,sysvmsg,sysvsem,sysvshm,tidy,tokenizer,xlswriter,xml,xmlreader,xmlwriter,xsl,xz,zip,zlib,yaml,zstd -f publish=false
 ```
 
 Publish (creates the release and attestation):
 
 ```bash
-gh workflow run publish.yml -f frankenphp_version=1.13.0 -f revision=1 -f publish=true
+gh workflow run publish.yml -f frankenphp_version=1.13.0 -f revision=1 -f spc_tag=2.8.5 \
+  -f extensions=amqp,apcu,ast,bcmath,brotli,bz2,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,ftp,gd,gmp,gettext,iconv,igbinary,imagick,intl,ldap,lz4,mbregex,mbstring,memcached,mysqli,mysqlnd,opcache,openssl,password-argon2,parallel,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pgsql,phar,posix,protobuf,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,ssh2,sysvmsg,sysvsem,sysvshm,tidy,tokenizer,xlswriter,xml,xmlreader,xmlwriter,xsl,xz,zip,zlib,yaml,zstd -f publish=true
 ```
 
-The workflow has two jobs. `verify` runs with a read-only token: it downloads the upstream binary, verifies its attestation, smoke-tests it (the only step that executes the binary) and uploads the binary, `SHA256SUMS` and `build.json` as a workflow artifact. `publish` (only when `publish=true`) holds the write and OIDC permissions but never executes the binary: it re-verifies the upstream attestation, cross-checks sha256, size, digest and build id against `build.json`, re-checks that the tag is free, then attests and creates the release. Runs for the same build id are serialized.
+The workflow has two jobs. `verify` runs with a read-only token: it downloads the upstream binary, verifies its attestation, smoke-tests it, builds the PHP CLI with `scripts/build-php.sh`, checks parity (`scripts/parity.php`, run by the built CLI), runs it in `public.ecr.aws/lambda/provided:al2023`, enforces a 100 MB size gate, and uploads both binaries, `SHA256SUMS` and `build.json` as a workflow artifact. Only this job executes binaries. `publish` (only when `publish=true`) holds the write and OIDC permissions but never executes the binary: it re-verifies the upstream attestation, cross-checks sha256, size, digest and build id (and the PHP CLI's sha256 and size) against `build.json`, re-checks that the tag is free, then attests and creates the release. Runs for the same build id are serialized.
 
 You can also run `scripts/mirror.sh <version> <revision> <outdir>` locally (needs `gh`, `jq`, and Docker on non-arm64-Linux hosts).
 
@@ -44,4 +48,6 @@ Run the parity tests (needs `php`):
 
 ```bash
 bash tests/parity-test.sh
+bash tests/build-php-args-test.sh
+bash tests/add-php-cli-test.sh
 ```

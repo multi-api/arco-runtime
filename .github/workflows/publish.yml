@@ -8,6 +8,14 @@ on:
       revision:
         description: Build revision (1, 2, ...)
         required: true
+      spc_tag:
+        description: static-php-cli release tag for the PHP CLI (e.g. 2.8.5)
+        required: true
+        type: string
+      extensions:
+        description: PHP CLI extensions, comma-separated (defaultExtensions of FrankenPHP's build-static.sh for this version)
+        required: true
+        type: string
       publish:
         description: Create the release (false = dry run, upload as artifact)
         type: boolean
@@ -17,20 +25,27 @@ concurrency:
   group: publish-${{ inputs.frankenphp_version }}-${{ inputs.revision }}
   cancel-in-progress: false
 jobs:
-  # Runs the upstream binary (smoke test). Read-only token: nothing here can write to the repo or mint OIDC tokens.
+  # Runs the upstream binary (smoke test) and builds and runs the PHP CLI.
+  # Read-only token: nothing here can write to the repo or mint OIDC tokens.
   verify:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
     permissions:
       contents: read
     env:
       VERSION: ${{ inputs.frankenphp_version }}
       REVISION: ${{ inputs.revision }}
+      SPC_TAG: ${{ inputs.spc_tag }}
+      EXTENSIONS: ${{ inputs.extensions }}
     steps:
       - name: Validate inputs and ref
         run: |
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "must run from main (got $GITHUB_REF)" >&2; exit 1; }
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version" >&2; exit 1; }
           [[ "$REVISION" =~ ^[1-9][0-9]*$ ]] || { echo "invalid revision" >&2; exit 1; }
+          # Same rules as scripts/build-php.sh.
+          [[ "$SPC_TAG" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]] || { echo "invalid spc tag" >&2; exit 1; }
+          [[ "$EXTENSIONS" =~ ^[a-z0-9][a-z0-9_,-]*$ ]] || { echo "invalid extension list" >&2; exit 1; }
           echo "TAG=frankenphp-${VERSION}-r${REVISION}" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,11 +61,36 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/mirror.sh "$VERSION" "$REVISION" dist
+      # static-php-cli runs from source: it needs PHP and Composer (Ubuntu 24.04 packages). spc doctor installs the musl toolchain.
+      - name: Install static-php-cli prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends php-cli php-xml php-mbstring php-curl php-zip unzip composer
+      - name: Build the PHP CLI
+        env:
+          # Read-only token, used by spc download for GitHub API rate limits.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/build-php.sh "$(jq -r .php dist/build.json)" "$SPC_TAG" "$EXTENSIONS" dist
+      - name: Check PHP CLI parity with FrankenPHP
+        run: |
+          dist/php-linux-aarch64 scripts/inspect.php > dist/php-inspect.json
+          # The runner's PHP is not used: the built CLI runs the parity check itself.
+          dist/php-linux-aarch64 scripts/parity.php dist/frankenphp-inspect.json dist/php-inspect.json
+      - name: Run the PHP CLI in the Lambda base image
+        run: docker run --rm --platform linux/arm64 -v "$PWD/dist:/d:ro" --entrypoint /d/php-linux-aarch64 public.ecr.aws/lambda/provided:al2023 -v
+      - name: PHP CLI size gate
+        run: |
+          SIZE="$(wc -c < dist/php-linux-aarch64 | tr -d ' ')"
+          echo "php-linux-aarch64: $SIZE bytes"
+          (( SIZE <= 104857600 )) || { echo "php-linux-aarch64 is above 100 MB ($SIZE bytes)" >&2; exit 1; }
+      - name: Add the PHP CLI to build.json and SHA256SUMS
+        run: scripts/add-php-cli.sh dist "$SPC_TAG"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.TAG }}
           path: |
             dist/frankenphp-linux-aarch64
+            dist/php-linux-aarch64
             dist/SHA256SUMS
             dist/build.json
           if-no-files-found: error
@@ -96,6 +136,13 @@ jobs:
           # Independent of the verify job's output: the binary must be the asset upstream publishes for this version.
           UPSTREAM="$(gh api "repos/php/frankenphp/releases/tags/v${VERSION}" --jq '.assets[] | select(.name == "frankenphp-linux-aarch64") | .digest')"
           [[ "sha256:$SHA" == "$UPSTREAM" ]] || { echo "binary differs from upstream v${VERSION} asset ($UPSTREAM)" >&2; exit 1; }
+          # PHP CLI: checked against build.json, never executed here.
+          PHP_SHA="$(sha256sum php-linux-aarch64 | cut -d' ' -f1)"
+          PHP_SIZE="$(wc -c < php-linux-aarch64 | tr -d ' ')"
+          [[ "$PHP_SHA" == "$(jq -r '.php_cli.sha256' build.json)" ]] || { echo "php-linux-aarch64 sha256 differs from build.json" >&2; exit 1; }
+          [[ "$PHP_SIZE" == "$(jq -r '.php_cli.size' build.json)" ]] || { echo "php-linux-aarch64 size differs from build.json" >&2; exit 1; }
+          # SHA256SUMS must list exactly the two binaries, and both must match.
+          [[ "$(cut -d' ' -f3 SHA256SUMS | sort | tr '\n' ' ')" == "frankenphp-linux-aarch64 php-linux-aarch64 " ]] || { echo "SHA256SUMS must list both binaries" >&2; cat SHA256SUMS >&2; exit 1; }
           sha256sum -c SHA256SUMS
       - name: Refuse to overwrite an existing build
         env:
@@ -107,11 +154,13 @@ jobs:
       - name: Attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/frankenphp-linux-aarch64
+          subject-path: |
+            dist/frankenphp-linux-aarch64
+            dist/php-linux-aarch64
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" dist/frankenphp-linux-aarch64 dist/SHA256SUMS dist/build.json \
+          gh release create "$TAG" dist/frankenphp-linux-aarch64 dist/php-linux-aarch64 dist/SHA256SUMS dist/build.json \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" \
-            --notes "Mirror of the official FrankenPHP v${VERSION} linux-aarch64 binary, attestation-verified. See build.json."
+            --notes "FrankenPHP v${VERSION} (official binary, attestation-verified) and a PHP CLI built from the same PHP version and extensions. See build.json."

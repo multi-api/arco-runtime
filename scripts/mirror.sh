@@ -16,7 +16,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
-rm -f "$OUT/$ASSET" "$OUT/SHA256SUMS" "$OUT/build.json"
+rm -f "$OUT/$ASSET" "$OUT/SHA256SUMS" "$OUT/build.json" "$OUT/frankenphp-inspect.json"
 
 echo "Downloading $ASSET from php/frankenphp v$VERSION"
 gh release download "v$VERSION" --repo php/frankenphp --pattern "$ASSET" --dir "$OUT"
@@ -48,6 +48,7 @@ UPSTREAM_DIGEST="$(gh api "repos/php/frankenphp/releases/tags/v$VERSION" --jq ".
 [[ "$UPSTREAM_DIGEST" == "sha256:$SHA" ]] || { echo "upstream digest $UPSTREAM_DIGEST != sha256:$SHA" >&2; exit 1; }
 
 echo "$SHA  $ASSET" > "$OUT/SHA256SUMS"
+echo "$INSPECT" > "$OUT/frankenphp-inspect.json"
 echo "$INSPECT" | jq \
   --arg id "$ID" --arg frankenphp "$VERSION" --arg sha "$SHA" --argjson size "$SIZE" \
   --arg digest "$UPSTREAM_DIGEST" --arg release "v$VERSION" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

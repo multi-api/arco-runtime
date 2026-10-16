@@ -10,8 +10,10 @@ EXTS="${3:?comma-separated extensions}"
 OUT="${4:?output directory}"
 
 [[ "$PHP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid php version: $PHP_VERSION" >&2; exit 1; }
-[[ "$SPC_TAG" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "invalid spc tag: $SPC_TAG" >&2; exit 1; }
-[[ "$EXTS" =~ ^[a-z0-9_,-]+$ ]] || { echo "invalid extension list: $EXTS" >&2; exit 1; }
+[[ "$SPC_TAG" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]] || { echo "invalid spc tag: $SPC_TAG" >&2; exit 1; }
+[[ "$EXTS" =~ ^[a-z0-9][a-z0-9_,-]*$ ]] || { echo "invalid extension list: $EXTS" >&2; exit 1; }
+# A relative name starting alphanumeric, ./name or an absolute path; never "-" first, never "..".
+[[ "$OUT" =~ ^([0-9A-Za-z]|\./|/) && "$OUT" != *..* ]] || { echo "invalid output directory: $OUT" >&2; exit 1; }
 [[ "$(uname -s)/$(uname -m)" == "Linux/aarch64" ]] || { echo "must run on Linux aarch64" >&2; exit 1; }
 
 mkdir -p "$OUT"
@@ -30,4 +32,6 @@ SPC_LIBC=musl ./bin/spc build "$EXTS" --build-cli --enable-zts --disable-opcache
 
 cp buildroot/bin/php "$OUT/php-linux-aarch64"
 chmod 0755 "$OUT/php-linux-aarch64"
+BUILT_VERSION="$("$OUT/php-linux-aarch64" -n -r 'echo PHP_VERSION;')"
+[[ "$BUILT_VERSION" == "$PHP_VERSION" ]] || { echo "built PHP $BUILT_VERSION, expected $PHP_VERSION" >&2; exit 1; }
 echo "Built $OUT/php-linux-aarch64 ($(wc -c < "$OUT/php-linux-aarch64") bytes)"
