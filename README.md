@@ -33,3 +33,15 @@ Never delete or replace a release. If anything needs to change, publish a new re
 ```bash
 gh attestation verify frankenphp-linux-aarch64 --repo multi-api/arco-runtime --signer-workflow multi-api/arco-runtime/.github/workflows/publish.yml
 ```
+
+## PHP CLI build and parity check
+
+`scripts/build-php.sh <php-version> <spc-tag> <extensions-csv> <outdir>` builds a static PHP CLI (`<outdir>/php-linux-aarch64`) with [static-php-cli](https://github.com/crazywhalecc/static-php-cli): musl, ZTS, opcache JIT disabled. It only runs on Linux aarch64 (needs `git`, `composer`, `php`).
+
+`php scripts/parity.php <frankenphp-inspect.json> <php-inspect.json>` checks that the CLI has FrankenPHP's PHP version and exactly its extensions (minus `frankenphp-cli`). Both inputs are the output of `scripts/inspect.php`.
+
+Run the parity tests (needs `php`):
+
+```bash
+bash tests/parity-test.sh
+```
