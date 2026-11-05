@@ -19,7 +19,8 @@ OUT="${4:?output directory}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# On failure, print the end of spc's own logs first: the job log only shows "Command exited with non-zero code".
+trap 'status=$?; if (( status != 0 )); then for f in "$WORK"/log/spc.*.log; do [[ -f "$f" ]] || continue; echo "::group::$(basename "$f") (last 300 lines)"; tail -n 300 "$f"; echo "::endgroup::"; done; fi; rm -rf "$WORK"' EXIT
 
 # spc's self-contained release binary (no PHP or Composer needed), checked against the release's own digest.
 SPC_ASSET="spc-linux-aarch64.tar.gz"
