@@ -37,7 +37,15 @@ rm "$WORK/$SPC_ASSET"
 # The spc binary uses the current directory for buildroot/, source/ and downloads/.
 cd "$WORK"
 ./spc doctor --auto-fix
-./spc download --with-php="$PHP_VERSION" --for-extensions="$EXTS" --prefer-pre-built --retry 5
+# spc 2.8.5 fetches ext-brotli from the extension's master branch, unpinned. Its bundled brotli sources moved past the
+# pre-built libbrotli headers (php-ext-brotli 0.21.1, 2026-10-24: BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH undeclared),
+# so pin the last tag that builds. Bump it together with spc_tag.
+EXT_BROTLI_TAG="0.21.0"
+CUSTOM_GIT=()
+if [[ ",$EXTS," == *",brotli,"* ]]; then
+  CUSTOM_GIT+=(--custom-git="ext-brotli:${EXT_BROTLI_TAG}:https://github.com/kjdev/php-ext-brotli")
+fi
+./spc download --with-php="$PHP_VERSION" --for-extensions="$EXTS" --prefer-pre-built --retry 5 "${CUSTOM_GIT[@]}"
 SPC_LIBC=musl ./spc build "$EXTS" --build-cli --enable-zts --disable-opcache-jit
 
 cp buildroot/bin/php "$OUT/php-linux-aarch64"
