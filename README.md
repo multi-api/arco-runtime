@@ -8,7 +8,14 @@ Immutable FrankenPHP runtime builds for [Arco](https://github.com/multi-api/arco
 
 ## Publishing a build
 
-`spc_tag` is the static-php-cli release used to build the PHP CLI. `extensions` is `defaultExtensions` from FrankenPHP's `build-static.sh` at the release tag (`gh api "repos/php/frankenphp/contents/build-static.sh?ref=v1.13.0" --jq .content | base64 -d | grep ^defaultExtensions=`).
+`spc_tag` is the static-php-cli release used to build the PHP CLI. `extensions` is the list FrankenPHP builds its static binary with, at the release tag:
+
+- **1.13.5 and later:** the `extensions:` line of `craft.yml` (`gh api "repos/php/frankenphp/contents/craft.yml?ref=v1.13.5" --jq .content | base64 -d | grep ^extensions:`).
+- **Before 1.13.5:** `defaultExtensions` in `build-static.sh` (`gh api "repos/php/frankenphp/contents/build-static.sh?ref=v1.13.0" --jq .content | base64 -d | grep ^defaultExtensions=`).
+
+**That list can be short of what the binary really loads.** FrankenPHP builds with `with-suggests: true`, so an extension another one suggests is compiled in without being named, and `scripts/build-php.sh` builds exactly the list it is given. For `frankenphp-1.13.5-r1` (spc 2.8.5) the parity check failed until `msgpack` (suggested by `memcached`) was added by hand: the `extensions` input was the `craft.yml` list plus `msgpack`. Expect to add it again for the next build, and always start with a dry run: `scripts/parity.php` names the extensions that differ, and the binary's real list is in `build.json` of the previous release (`gh release download <tag> -p build.json -O - | jq .extensions`).
+
+The commands below show the 1.13.0 list; take the list of the version you publish.
 
 Dry run (builds and verifies, uploads the result as a workflow artifact only):
 
